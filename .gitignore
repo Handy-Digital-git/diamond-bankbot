@@ -1,0 +1,16 @@
+# Node.js dependencies
+node_modules/
+package-lock.json
+
+# Environment variables (DO NOT COMMIT SENSITIVE DATA)
+.env
+
+# Logs & temp files
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# AWS credentials (avoid pushing sensitive keys)
+.aws/
