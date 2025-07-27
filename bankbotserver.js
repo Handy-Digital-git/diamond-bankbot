@@ -35,7 +35,7 @@ const bucketName = process.env.S3_BUCKET_NAME;
 
 
 // Replace with your actual OpenAI API key
-const OPENAI_API_KEY = "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";
+const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
 
 const app = express();
 const upload = multer({ dest: "tmp-uploads/" }); // ✅ Define "upload" here
