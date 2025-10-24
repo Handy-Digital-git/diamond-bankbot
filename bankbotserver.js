@@ -19,9 +19,14 @@ import multer from "multer";
 import AWS from "aws-sdk";
 import dotenv from "dotenv";
 import twilio from "twilio";
+import Tesseract from "tesseract.js";
+import { createClient } from "@supabase/supabase-js";
 import axios from "axios";
 
 dotenv.config();
+
+import OpenAI from "openai";
+const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
 // ✅ Configure AWS S3
 AWS.config.update({
@@ -33,10 +38,13 @@ AWS.config.update({
 const s3 = new AWS.S3();
 const bucketName = process.env.S3_BUCKET_NAME;
 
+const supabase = createClient(
+  process.env.SUPABASE_URL,
+  process.env.SUPABASE_SERVICE_ROLE_KEY
+);
 
 // Replace with your actual OpenAI API key
 const OPENAI_API_KEY = process.env.OPENAI_API_KEY;
-
 const app = express();
 const upload = multer({ dest: "tmp-uploads/" }); // ✅ Define "upload" here
 app.use(bodyParser.json());
@@ -104,6 +112,25 @@ app.post("/send-otp", async (req, res) => {
   } catch (error) {
       console.error("❌ Error sending OTP:", error);
       res.status(500).json({ error: "Failed to send OTP." });
+  }
+});
+
+
+app.post("/submit-application", async (req, res) => {
+  const applicationData = req.body;
+
+  try {
+    const { data, error } = await supabase
+      .from("loan_applications")
+      .insert([applicationData])
+      .select();
+
+    if (error) throw error;
+
+    res.json({ success: true, data });
+  } catch (err) {
+    console.error("❌ Supabase insert error:", err.message);
+    res.status(500).json({ error: "Failed to store application" });
   }
 });
 
@@ -211,73 +238,61 @@ app.post("/bankbot-stream", async (req, res) => {
 // Then define a new endpoint:
 
 app.post("/upload-ocr-result", async (req, res) => {
-    console.log("🟡 Received upload request:");
-  
-    const { name, extractedText } = req.body;
-    if (!name || !extractedText) {
-      console.error("🔴 Missing required fields:", { name, extractedText });
-      return res.status(400).json({ error: "Missing required fields: name or extractedText." });
-    }
-  
-    try {
-      console.log("🟢 Inserting into database...");
-      const bankStatementsCollection = db.collection("diamond-bank-statements");
-      const statementDoc = {
-        userName: name,
-        extractedText,
-        uploadedAt: new Date(),
-        fileKey: req.body.fileKey || null // ✅ Store S3 file key if available
-    };
-    
-      const insertResult = await bankStatementsCollection.insertOne(statementDoc);
-      console.log("✅ Inserted into DB:", insertResult);
-  
-      return res.json({ success: true, data: statementDoc });
-    } catch (err) {
-      console.error("🔴 Error storing OCR text:", err);
-      return res.status(500).json({ error: "Internal server error." });
-    }
-  });
-  
+  const { name, extractedText } = req.body;
 
-
-
-  app.post("/analyze-bank-statement", async (req, res) => {
-  const { name } = req.body;
-
-  if (!name) {
-    return res.status(400).json({ error: "User name is required." });
+  if (!name || !extractedText) {
+    return res.status(400).json({ error: "Missing required fields: name or extractedText." });
   }
 
   try {
-    // 1️⃣ Get the latest bank statement for this user
-    const bankStatementsCollection = db.collection("diamond-bank-statements");
-    const latestStatement = await bankStatementsCollection.findOne(
-      { userName: name },
-      { sort: { uploadedAt: -1 } } // Get the latest entry
-    );
+    const { data, error } = await supabase
+      .from("bank_statements")
+      .insert([
+        {
+          user_name: name,
+          extracted_text: extractedText
+        }
+      ])
+      .select();
 
-    if (!latestStatement || !latestStatement.extractedText) {
-      return res.status(404).json({ error: "No bank statement found for this user." });
-    }
+    if (error) throw error;
 
-    const extractedText = latestStatement.extractedText;
-    console.log(`Analyzing extracted text for ${name}`)
+    console.log("✅ OCR result saved in Supabase:", data);
+    return res.json({ success: true, data });
+  } catch (err) {
+    console.error("🔴 Error saving OCR result:", err);
+    res.status(500).json({ error: "Failed to save OCR result" });
+  }
+});
 
-    // 2️⃣ Send to AI for analysis
-    const aiResponse = await fetch("https://api.openai.com/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${OPENAI_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: "gpt-4.1",
-        messages: [
-            {
-              role: "system",
-              content: 
-                "You are a financial risk assessor. Analyze the provided **bank statement text** and assess the applicant using the criteria below:\n\n" +
+
+app.post("/analyze-bank-statement", async (req, res) => {
+  const { name } = req.body;
+  if (!name) return res.status(400).json({ error: "User name is required." });
+
+  try {
+    // 1️⃣ Fetch latest statement text
+    const { data, error } = await supabase
+      .from("bank_statements")
+      .select("extracted_text")
+      .eq("user_name", name)
+      .order("uploaded_at", { ascending: false })
+      .limit(1);
+
+    if (error) throw error;
+    if (!data?.length)
+      return res.status(404).json({ error: "No bank statement found." });
+
+    const extractedText = data[0].extracted_text;
+    console.log(`🔍 Analyzing bank statement for ${name}`);
+
+    // 2️⃣ Use the new Responses API
+    const result = await openai.responses.create({
+      model: "gpt-5-mini",
+      reasoning: { effort: "low" },
+      text: { verbosity: "low" },
+      input: `
+You are a financial risk assessor. Analyze the provided **bank statement text** and assess the applicant using the criteria below:\n\n" +
 
 "📌 **Decline Criteria:**\n" +
 
@@ -308,7 +323,19 @@ app.post("/upload-ocr-result", async (req, res) => {
 "Look for transactions related to personal loans, credit cards, or finance providers.\n" +
 "Include keywords or provider names such as: Capital One, Vanquis, Aqua, Barclaycard, MBNA, Tesco Bank, Sainsbury’s Bank, Likely Loans, Everyday Loans, Avant, Fund Ourselves, 118 118 Money, Drafty, Lending Stream, Bamboo Loans, Amigo Loans, TrustTwo, Oakam, Dot Dot Loans, SafetyNet, Zopa, Tappily, CashFloat, Sunny, MyJar, WageDay Advance, PayDay UK, Provident, Credit Spring, TotallyMoney, ClearScore, CashPlus, Loqbox, and any transaction including keywords like **‘credit’, ‘loan’, ‘finance’, ‘repayment’, ‘instalment’**, or **‘monthly payment’**. [DO NOT list keywords in the response]\n" +
 "If found, include this summary:\n" +
-"Credit/Loan Summary: [List of loan provider names with total amounts]\n\n"+
+"Credit/Loan Summary: [List of loan provider names with total amounts]\n\n" +
+
+"📊 **Pay Likelihood Analysis:**\n" +
+"This is not a decline factor but should be **included in the report** to assess affordability patterns.\n" +
+"Analyze the bank statement to estimate the applicant’s ability to make a **£20 weekly repayment** reliably.\n" +
+"Base your analysis on recurring income and outgoings patterns.\n" +
+"Include the following:\n" +
+"   - **Likelihood %** of successful repayment each week (e.g., 85%)\n" +
+"   - **Best Day(s) of the Week** to collect payment (e.g., Friday)\n" +
+"   - **Typical Income Days** (e.g., salary deposits, benefits, etc.)\n" +
+"   - **Week-by-Week Trend Summary** indicating high or low balance periods\n" +
+"   - Short explanation of the **customer’s affordability pattern**\n" +
+"Keep this section brief but data-driven.\n\n" +
 
 "✅ **Decision Format:**\n" +
 "Decision MUST be first in the response and only show one decision either 'PASSED' or 'DECLINED'\n" +
@@ -317,104 +344,183 @@ app.post("/upload-ocr-result", async (req, res) => {
 "If **none** are met:\n" +
 "PASSED - Reason: [Why the application passed]\n\n" +
 
-"Here is the bank statement text:\n" +
-extractedText
+"🧾 **Structured Summary (Output Format):**\n" +
+"Please return your results in the following structured format and make the category headers BOLD for readability:\n\n" +
+"**The Decision:** [PASSED or DECLINED - Reason]\n<br>\n" +
+"**Overdrawn Balances:** [Summary of findings]\n<br>\n" +
+"**Gambling Transactions:** [Summary of findings]\n<br>\n" +
+"**Returned Payments / Arrestments:** [Summary of findings]\n<br>\n" +
+"**Buy Now Pay Later (BNPL) Usage:** [Summary of findings]\n<br>\n" +
+"**Other Credit or Loan Repayment:** [Summary of findings]\n<br>\n" +
+"**Pay Likelihood Analysis:** [Summary of findings]\n"
 
-              },
-              
-          { role: "user", content: extractedText },
-        ],
-        max_tokens: 1000,
-        temperature: 0.7,
-      }),
+
+"Here is the bank statement text:\n" +
+${extractedText}
+      `,
+      max_output_tokens: 15000,
     });
 
-    if (!aiResponse.ok) {
-      throw new Error(`AI API Error: ${await aiResponse.text()}`);
-    }
-
-    const aiResult = await aiResponse.json();
-    const aiDecision = aiResult.choices?.[0]?.message?.content?.trim() || "Error processing AI response.";
-    
-    console.log(`AI Decision for ${name}:`, aiDecision);
-
-    // 3️⃣ Return decision to front-end
-    res.json({ decision: aiDecision });
-
+    console.log(`✅ GPT-5 Response for ${name}:`, result.output_text);
+    res.json({ decision: result.output_text });
   } catch (error) {
-    console.error("Error analyzing bank statement:", error);
-    res.status(500).json({ error: "Internal server error." });
+    console.error("❌ Error analyzing bank statement:", error);
+    res.status(500).json({ error: error.message });
   }
 });
 
 
 
-
+// ✅ Permanent on-demand version
 app.post("/generate-download-url", async (req, res) => {
   const { userId } = req.body;
 
   if (!userId) {
-      return res.status(400).json({ error: "Missing userId" });
+    return res.status(400).json({ error: "Missing userId" });
   }
 
   const params = {
-      Bucket: process.env.S3_BUCKET_NAME,
-      Prefix: `bank-statements/${encodeURIComponent(userId)}/`, // ✅ List all files in the folder
+    Bucket: process.env.S3_BUCKET_NAME,
+    Prefix: `bank-statements/${encodeURIComponent(userId)}/`,
   };
 
   try {
-      const data = await s3.listObjectsV2(params).promise();
-      const fileKeys = data.Contents.map(obj => obj.Key);
+    // List all files in that user's folder
+    const data = await s3.listObjectsV2(params).promise();
+    const filtered = data.Contents.filter(obj => !obj.Key.endsWith("index.html"));
+    if (!data.Contents || data.Contents.length === 0) {
+      return res.status(404).json({ error: "No files found in this folder" });
+    }
 
-      if (fileKeys.length === 0) {
-          return res.status(404).json({ error: "No files found in this folder" });
-      }
-
-      // ✅ Generate a pre-signed URL for each file
-      const preSignedUrls = fileKeys.map(key =>
-          s3.getSignedUrl("getObject", {
-              Bucket: process.env.S3_BUCKET_NAME,
-              Key: key,
-              Expires: 7 * 24 * 60 * 60 // 7 days expiration
-          })
+    // Create fresh signed URLs (valid for 1 hour each time it's viewed)
+    const files = await Promise.all(
+  data.Contents
+    // 🔹 Filter out unwanted files (index.html, temp files, empty folders)
+    .filter(obj => {
+      const name = obj.Key.split("/").pop();
+      if (!name) return false; // skip empty folder markers
+      const lower = name.toLowerCase();
+      return (
+        !lower.endsWith("index.html") &&
+        !lower.endsWith(".tmp") &&
+        !lower.endsWith(".json")
       );
-
-      // ✅ Generate a simple HTML index with links
-      const htmlContent = `
-          <html>
-              <body>
-                  <h2>Bank Statements for ${userId}</h2>
-                  <ul>
-                      ${preSignedUrls.map(url => `<li><a href="${url}" target="_blank">${url}</a></li>`).join("")}
-                  </ul>
-              </body>
-          </html>
-      `;
-
-      const htmlKey = `bank-statements/${encodeURIComponent(userId)}/index.html`;
-
-      await s3.putObject({
-          Bucket: process.env.S3_BUCKET_NAME,
-          Key: htmlKey,
-          Body: htmlContent,
-          ContentType: "text/html"
-      }).promise();
-
-      const folderUrl = s3.getSignedUrl("getObject", {
-          Bucket: process.env.S3_BUCKET_NAME,
-          Key: htmlKey,
-          Expires: 7 * 24 * 60 * 60
+    })
+    // 🔹 Generate fresh signed URLs only for valid files
+    .map(async (obj) => {
+      const url = s3.getSignedUrl("getObject", {
+        Bucket: process.env.S3_BUCKET_NAME,
+        Key: obj.Key,
+        Expires: 3600, // 1 hour
       });
 
-      console.log("✅ Folder-Level Secure Link Generated");
-      console.log("✅ Application Completed");
-      res.json({ folderUrl });
+      return {
+        name: obj.Key.split("/").pop(),
+        url,
+        size: obj.Size, // optional: file size in bytes
+        lastModified: obj.LastModified, // optional: timestamp
+      };
+    })
+);
 
+
+    // Build HTML dynamically (no file uploaded back to S3)
+    const html = `
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>${userId.replace(/-/g, " ")} – Bank Statements</title>
+    <style>
+      body {
+        font-family: "Segoe UI", Roboto, sans-serif;
+        background: #f9fafb;
+        color: #111827;
+        margin: 0;
+        padding: 40px;
+      }
+      .container {
+        max-width: 700px;
+        margin: auto;
+        background: white;
+        border-radius: 12px;
+        padding: 30px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.05);
+      }
+      h1 {
+        color: #059669;
+        font-size: 1.8rem;
+        margin-bottom: 5px;
+      }
+      p.sub {
+        color: #6b7280;
+        margin-bottom: 20px;
+        font-size: 0.9rem;
+      }
+      ul {
+        list-style: none;
+        padding: 0;
+        margin: 0;
+      }
+      li {
+        background: #f3f4f6;
+        border-radius: 8px;
+        margin-bottom: 10px;
+        padding: 10px 14px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+      }
+      a {
+        text-decoration: none;
+        color: white;
+        background: #10b981;
+        padding: 6px 12px;
+        border-radius: 6px;
+        font-size: 0.85rem;
+        font-weight: 600;
+      }
+      a:hover {
+        background: #059669;
+      }
+      footer {
+        text-align: center;
+        font-size: 0.8rem;
+        color: #9ca3af;
+        margin-top: 25px;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <h1>Diamond Finance – Bank Statements</h1>
+      <p class="sub">Customer: ${userId.replace(/-/g, " ")}</p>
+      <ul>
+        ${files.map(f => `
+          <li>
+            <span>${f.name}</span>
+            <a href="${f.url}" target="_blank">View</a>
+          </li>
+        `).join("")}
+      </ul>
+      <footer>
+        Generated ${new Date().toLocaleString("en-GB")}
+      </footer>
+    </div>
+  </body>
+</html>
+`;
+
+
+    res.setHeader("Content-Type", "text/html");
+    res.send(html);
   } catch (error) {
-      console.error("❌ Error generating folder link:", error);
-      res.status(500).json({ error: "Failed to generate folder pre-signed URL" });
+    console.error("❌ Error generating folder link:", error);
+    res.status(500).json({ error: "Failed to generate folder pre-signed URL" });
   }
 });
+
 
 
 
