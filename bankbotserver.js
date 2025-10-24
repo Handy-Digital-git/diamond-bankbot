@@ -345,7 +345,7 @@ You are a financial risk assessor. Analyze the provided **bank statement text** 
 "PASSED - Reason: [Why the application passed]\n\n" +
 
 "🧾 **Structured Summary (Output Format):**\n" +
-"Please return your results in the following structured format and make the category headers BOLD for readability:\n\n" +
+"Please return your results in the following structured format and make the category headers BOLD for readability and do not include any <br> tags in the response, they are to show where breaks go:\n\n" +
 "**The Decision:** [PASSED or DECLINED - Reason]\n<br>\n" +
 "**Overdrawn Balances:** [Summary of findings]\n<br>\n" +
 "**Gambling Transactions:** [Summary of findings]\n<br>\n" +
@@ -368,7 +368,6 @@ ${extractedText}
     res.status(500).json({ error: error.message });
   }
 });
-
 
 
 // ✅ Permanent on-demand version
@@ -748,3 +747,4 @@ app.listen(PORT, async () => {
   console.log(`🚀 BankBot server running on port ${PORT}`);
   await connectToDatabase();
 });
+
