@@ -349,7 +349,8 @@ You are a financial risk assessor. Analyze the provided **bank statement text** 
 "   - Check the **balance column**.\n" +
 "   - Decline if any balance is shown as more than **£100 overdrawn**, indicated by either:\n" +
 "     • A **negative value less than -£100** (e.g. -£120), or\n" +
-"     • A value over £100 that includes **'OD'** (e.g. 125.00 OD)\n\n" +
+"     • A value over £100 that includes **'OD'** (e.g. 125.00 OD)\n" +
+"     • **NEVER INCLUDE MONEY IN ANY SAVING POTS**\n" +
 
 "2. **Gambling Transactions**\n" +
 "   - Search for gambling-related keywords in transaction descriptions (see keyword list below).\n" +
@@ -796,5 +797,6 @@ app.listen(PORT, async () => {
   console.log(`🚀 BankBot server running on port ${PORT}`);
   await connectToDatabase();
 });
+
 
 
