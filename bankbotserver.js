@@ -89,6 +89,41 @@ app.get("/health", (req, res) => {
 });
 
 
+// --- Beautify AI decision helper ---
+async function beautifyAiDecision(rawText) {
+  if (!rawText || rawText.trim() === "") return rawText;
+
+  try {
+    const response = await axios.post(
+      "https://api.openai.com/v1/chat/completions",
+      {
+        model: "gpt-4o-mini",
+        messages: [
+          {
+            role: "system",
+            content:
+              "You are a financial summary formatter. Rewrite the given AI decision into a clear, professional structure with bold section titles. Keep it concise, factual, and polished. Use Markdown-style emphasis (e.g., **labels**).",
+          },
+          { role: "user", content: rawText },
+        ],
+        temperature: 0.3,
+      },
+      {
+        headers: {
+          Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
+          "Content-Type": "application/json",
+        },
+      }
+    );
+
+    return response.data.choices[0].message.content.trim();
+  } catch (err) {
+    console.error("⚠️ Beautify AI Decision Failed:", err.message);
+    return rawText; // fallback if anything goes wrong
+  }
+}
+
+
 app.post("/send-otp", async (req, res) => {
   let { phoneNumber } = req.body;
 
@@ -117,16 +152,30 @@ app.post("/send-otp", async (req, res) => {
 
 
 app.post("/submit-application", async (req, res) => {
-  const applicationData = req.body;
-
   try {
+    const applicationData = req.body;
+
+    // 🧠 Extract the raw AI decision from frontend
+    const rawDecision = applicationData.ai_decision || "";
+
+    // 🪄 Beautify AI Decision before saving
+    const beautifiedDecision = await beautifyAiDecision(rawDecision);
+
+    // 🧱 Merge beautified text back into application data
+    const formattedApplication = {
+      ...applicationData,
+      ai_decision: beautifiedDecision,  // polished version stored
+    };
+
+    // 💾 Insert into Supabase
     const { data, error } = await supabase
       .from("loan_applications")
-      .insert([applicationData])
+      .insert([formattedApplication])
       .select();
 
     if (error) throw error;
 
+    console.log(`✅ Beautified AI decision saved for ${formattedApplication.first_name} ${formattedApplication.surname}`);
     res.json({ success: true, data });
   } catch (err) {
     console.error("❌ Supabase insert error:", err.message);
@@ -747,4 +796,5 @@ app.listen(PORT, async () => {
   console.log(`🚀 BankBot server running on port ${PORT}`);
   await connectToDatabase();
 });
+
 
