@@ -356,7 +356,7 @@ You are a financial risk assessor. Analyze the provided **bank statement text** 
 "   - Search for gambling-related keywords in transaction descriptions (see keyword list below).\n" +
 "   - Match these transactions to the **'Amount'** or **'Money Out'** columns.\n" +
 "   - If the **total gambling spend exceeds £200**, decline the application.\n" +
-"   - Keywords include: Bet, Casino, Poker, Slot, Roulette, Blackjack, Sportsbet, Gamble, Bingo, Wager, Betslip, Jackpot, Odds, Betting, Bet365, Ladbrokes, William Hill, Coral, SkyBet, PokerStars, Paddy Power, 888 Casino, Betfair, Betway, Unibet, Bwin, SportsBetting.ag, Betfred, Grosvenor Casinos, PartyPoker, Spreadex, BetVictor, Betsson, BoyleSports, VBet, LeoVegas, Casino.com, NetBet, FortuneJack. [DO NOT list keywords in the response]\n\n" +
+"   - Keywords include: Bet, Casino, Poker, Slot, Roulette, Blackjack, Sportsbet, Gamble, Bingo, Wager, Betslip, Jackpot, Odds, Betting, Bet365, Ladbrokes, LC International, William Hill, Electraworks Ltd, Coral, SkyBet, GIBRALTAR, PokerStars, Paddy Power, 888 Casino, Betfair, Betway, Unibet, Bwin, SportsBetting.ag, Betfred, Grosvenor Casinos, PartyPoker, Spreadex, BetVictor, Betsson, BoyleSports, VBet, LeoVegas, Casino.com, NetBet, FortuneJack. [DO NOT list keywords in the response]\n\n" +
 
 "3. **Returned Payments / Arrestments**\n" +
 "   - Look for keywords such as **'Returned DD'**, **'Direct Debit Reversal'**, or **'Arrestment'**.\n" +
@@ -797,6 +797,7 @@ app.listen(PORT, async () => {
   console.log(`🚀 BankBot server running on port ${PORT}`);
   await connectToDatabase();
 });
+
 
 
 
